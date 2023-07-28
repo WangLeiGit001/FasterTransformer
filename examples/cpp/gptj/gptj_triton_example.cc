@@ -111,6 +111,7 @@ broadCastRequest(const std::vector<int>& v_start_ids,
 
         int* start_ids_ptr = (int*)malloc(request_batch_size * sizeof(int));
         int* end_ids_ptr   = (int*)malloc(request_batch_size * sizeof(int));
+        bool* is_return_last_token_hidden_units_ptr = new bool(true);
         for (int i = 0; i < request_batch_size; i++) {
             start_ids_ptr[i] = param.start_id;
             end_ids_ptr[i]   = param.end_id;
@@ -141,7 +142,9 @@ broadCastRequest(const std::vector<int>& v_start_ids,
                 {"start_id",
                  triton::Tensor{triton::MEMORY_CPU, triton::TYPE_INT32, {(size_t)request_batch_size}, start_ids_ptr}},
                 {"end_id",
-                 triton::Tensor{triton::MEMORY_CPU, triton::TYPE_INT32, {(size_t)request_batch_size}, end_ids_ptr}}});
+                 triton::Tensor{triton::MEMORY_CPU, triton::TYPE_INT32, {(size_t)request_batch_size}, end_ids_ptr}},
+                {"is_return_last_token_hidden_units",
+                 triton::Tensor{triton::MEMORY_CPU, triton::TYPE_BOOL, {(size_t)request_batch_size}, is_return_last_token_hidden_units_ptr}}});
         if (!v_input_bad_words.empty()) {
             input_tensors->insert(
                 {"bad_words_list",
@@ -376,8 +379,8 @@ int main(int argc, char* argv[])
         }
     }
     printf("[INFO] forward is completed. \n");
-
     const int* d_output_ids = (const int*)output_tensors_lists[0].get()->at("output_ids").data;
+    const float* d_last_token_hidden_units = (const float*)output_tensors_lists[0].get()->at("last_token_hidden_units").data;
     const int  batch_size   = output_tensors_lists[0].get()->at("output_ids").shape[0];
     const int  beam_width   = output_tensors_lists[0].get()->at("output_ids").shape[1];
     const int  seq_len      = output_tensors_lists[0].get()->at("output_ids").shape[2];
@@ -390,30 +393,18 @@ int main(int argc, char* argv[])
             printf("[WARNING] Cannot write results into output file %s \n", fName.c_str());
         }
         else {
-            size_t outCount = batch_size * beam_width * seq_len;
-            int*   hBuf     = new int[outCount];
-            ft::cudaD2Hcpy(hBuf, d_output_ids, outCount);
+            size_t outCount = batch_size * beam_width * 4096;
+            float*   hBuf     = new float[outCount];
+            ft::cudaD2Hcpy(hBuf, d_last_token_hidden_units, outCount);
 
             {
                 std::cout << "Writing " << outCount << " elements\n";
-                int zeroCount = 0;
                 for (size_t i = 0; i < outCount; i++) {
-                    if (hBuf[i] == int(0)) {
-                        zeroCount++;
-                    }
                     outFile << hBuf[i] << " ";
-                    if ((i + 1) % (seq_len) == 0) {
+                    if ((i + 1) % (4096) == 0) {
                         outFile << std::endl;
                     }
-
-                    if (i < 10) {
-                        printf("%5d ", hBuf[i]);
-                    }
-                    if ((i + 1) % (seq_len) == 0 && i < 10) {
-                        std::cout << std::endl;
-                    }
                 }
-                std::cout << std::endl << "zeroCount = " << zeroCount << std::endl;
             }
             delete[] hBuf;
         }

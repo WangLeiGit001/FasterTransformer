@@ -86,6 +86,7 @@ protected:
 
     T* decoder_input_buf_;
     T* decoder_output_buf_;
+    T* last_token_hidden_units_buf_;
     T* normed_decoder_output_buf_;
 
     float* logits_buf_;

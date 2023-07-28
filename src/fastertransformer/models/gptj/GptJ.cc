@@ -104,6 +104,8 @@ void GptJ<T>::allocateBuffer(
     decoder_input_buf_ = (T*)(allocator_->reMalloc(decoder_input_buf_, sizeof(T) * batchxbeam * hidden_units_, false));
     decoder_output_buf_ =
         (T*)(allocator_->reMalloc(decoder_output_buf_, sizeof(T) * batchxbeam * hidden_units_, false));
+    last_token_hidden_units_buf_ =
+        (T*)(allocator_->reMalloc(last_token_hidden_units_buf_, sizeof(T) * batchxbeam * hidden_units_, false));
     normed_decoder_output_buf_ =
         (T*)(allocator_->reMalloc(normed_decoder_output_buf_, sizeof(T) * batchxbeam * hidden_units_, false));
     logits_buf_ = (float*)(allocator_->reMalloc(logits_buf_, sizeof(float) * batchxbeam * vocab_size_padded_, false));
@@ -170,6 +172,7 @@ void GptJ<T>::freeBuffer()
         allocator_->free((void**)(&input_attention_mask_));
         allocator_->free((void**)(&decoder_input_buf_));
         allocator_->free((void**)(&decoder_output_buf_));
+        allocator_->free((void**)(&last_token_hidden_units_buf_));
         allocator_->free((void**)(&normed_decoder_output_buf_));
         allocator_->free((void**)(&logits_buf_));
         allocator_->free((void**)(&nccl_logits_buf_));
@@ -698,6 +701,11 @@ void GptJ<T>::forward(std::unordered_map<std::string, Tensor>*       output_tens
 
         gpt_context_decoder_->forward(
             &decoder_output_tensors, &decoder_input_tensors, &gpt_weights->decoder_layer_weights);
+
+        if (output_tensors->count("last_token_hidden_units") > 0) {
+            cudaAutoCpy(last_token_hidden_units_buf_, decoder_output_buf_, batch_size * beam_width * hidden_units_, stream_);
+        }
+
         sync_check_cuda_error();
         invokeDecodingInitialize(finished_buf_,
                                  sequence_lengths_,
@@ -1206,6 +1214,14 @@ void GptJ<T>::setOutputTensors(std::unordered_map<std::string, Tensor>*       ou
         FT_CHECK_WITH_INFO(cum_log_probs.size() == batch_size * beam_width,
                            "The shape of cum_log_probs does not match with batch_size x beam_width.");
         cudaAutoCpy(cum_log_probs.getPtr<float>(), cum_log_probs_, cum_log_probs.size(), stream_);
+    }
+
+    // Return last token hidden unit if requested.
+    if (output_tensors->count("last_token_hidden_units") > 0) {
+        Tensor last_token_hidden_units = output_tensors->at("last_token_hidden_units");
+        FT_CHECK_WITH_INFO(last_token_hidden_units.size() == batch_size * beam_width * hidden_units_,
+                           "The shape of last_token_hidden_units does not match with batch_size x beam_width x hidden_units_.");
+        cudaAutoCpy(last_token_hidden_units.getPtr<T>(), last_token_hidden_units_buf_, last_token_hidden_units.size(), stream_);
     }
 }
 

@@ -202,6 +202,14 @@ GptJTritonModelInstance<T>::forward(std::shared_ptr<std::unordered_map<std::stri
                                           d_cum_log_probs_}});
     }
 
+    if (input_tensors->count("is_return_last_token_hidden_units") && *((bool*)input_tensors->at("is_return_last_token_hidden_units").data)) {
+        output_tensors.insert({"last_token_hidden_units",
+                               ft::Tensor{ft::MEMORY_GPU,
+                                          ft::TYPE_FP32,
+                                          std::vector<size_t>{request_batch_size, beam_width, 4096},
+                                          d_last_token_hidden_units_}});
+    }
+
     try {
         if (stream_cb_ != nullptr) {
             gpt_->registerCallback(triton_stream_callback<T>, this);
@@ -244,6 +252,8 @@ void GptJTritonModelInstance<T>::allocateBuffer(const size_t request_batch_size,
         (int*)(allocator_->reMalloc(d_sequence_lengths_, sizeof(int) * request_batch_size * beam_width, false));
     d_output_log_probs_ = (float*)(allocator_->reMalloc(
         d_output_log_probs_, sizeof(float) * request_batch_size * beam_width * max_request_output_len, false));
+    d_last_token_hidden_units_ = (float*)(allocator_->reMalloc(
+        d_last_token_hidden_units_, sizeof(float) * request_batch_size * beam_width * 4096, false));
     d_cum_log_probs_ =
         (float*)(allocator_->reMalloc(d_cum_log_probs_, sizeof(float) * request_batch_size * beam_width, false));
 }
@@ -254,6 +264,7 @@ void GptJTritonModelInstance<T>::freeBuffer()
     allocator_->free((void**)(&d_output_ids_));
     allocator_->free((void**)(&d_sequence_lengths_));
     allocator_->free((void**)(&d_output_log_probs_));
+    allocator_->free((void**)(&d_last_token_hidden_units_));
     allocator_->free((void**)(&d_cum_log_probs_));
 }
 

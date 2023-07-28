@@ -340,7 +340,9 @@ void gptj_example(const INIReader reader)
 
     int* d_output_ids;
     int* d_sequence_lengths;
+    T* d_last_token_hidden_units;
     deviceMalloc(&d_output_ids, request_batch_size * beam_width * total_output_len, false);
+    deviceMalloc(&d_last_token_hidden_units, request_batch_size * beam_width * head_num * size_per_head, false);
     deviceMalloc(&d_sequence_lengths, request_batch_size * beam_width, false);
     std::vector<uint32_t>                   output_seq_len(request_batch_size, total_output_len);
     std::unordered_map<std::string, Tensor> input_tensors = std::unordered_map<std::string, Tensor>{
@@ -402,10 +404,9 @@ void gptj_example(const INIReader reader)
         {"sequence_length",
          Tensor{MEMORY_GPU, TYPE_INT32, std::vector<size_t>{request_batch_size, beam_width}, d_sequence_lengths}},
         {"output_log_probs",
-         Tensor{MEMORY_GPU,
-                TYPE_FP32,
-                std::vector<size_t>{(size_t)request_output_len, request_batch_size, beam_width},
-                nullptr}}};
+         Tensor{MEMORY_GPU, TYPE_FP32, std::vector<size_t>{(size_t)request_output_len, request_batch_size, beam_width}, nullptr}},
+        {"last_token_hidden_units",
+         Tensor{MEMORY_GPU, TYPE_FP32, std::vector<size_t>{request_batch_size, beam_width, head_num * size_per_head}, d_last_token_hidden_units}}};
 
     print_mem_usage("After loading model");
 
@@ -436,30 +437,18 @@ void gptj_example(const INIReader reader)
             printf("[WARNING] Cannot write results into output file %s \n", fName.c_str());
         }
         else {
-            size_t outCount = total_output_len * request_batch_size * beam_width;
-            int*   hBuf     = new int[outCount];
-            cudaD2Hcpy(hBuf, d_output_ids, outCount);
+            size_t outCount = request_batch_size * beam_width * head_num * size_per_head;
+            T*   hBuf     = new T[outCount];
+            cudaD2Hcpy(hBuf, d_last_token_hidden_units, outCount);
 
             {
                 std::cout << "Writing " << outCount << " elements\n";
-                int zeroCount = 0;
                 for (size_t i = 0; i < outCount; i++) {
-                    if (hBuf[i] == int(0)) {
-                        zeroCount++;
-                    }
                     outFile << hBuf[i] << " ";
-                    if ((i + 1) % (total_output_len) == 0) {
+                    if ((i + 1) % (head_num * size_per_head) == 0) {
                         outFile << std::endl;
                     }
-
-                    if (i < 10) {
-                        printf("%5d ", hBuf[i]);
-                    }
-                    if ((i + 1) % (total_output_len) == 0 && i < 10) {
-                        std::cout << std::endl;
-                    }
                 }
-                std::cout << std::endl << "zeroCount = " << zeroCount << std::endl;
             }
             delete[] hBuf;
         }
@@ -516,6 +505,9 @@ void gptj_example(const INIReader reader)
     }
     if (d_sequence_lengths != nullptr) {
         cudaFree(d_sequence_lengths);
+    }
+    if (d_last_token_hidden_units != nullptr) {
+        cudaFree(d_last_token_hidden_units);
     }
 
     return;
